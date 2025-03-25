@@ -18,7 +18,7 @@ OUTPUT_DIR = "output"  # 输出结果目录
 CACHE_FILE = "output/cache.json"  # 缓存文件路径
 MAX_WORKERS = 4  # 并行处理的最大线程数
 SUPPORTED_FORMATS = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')  # 支持的图片格式
-VIDEO_API_BASE = "http://36.251.249.6:8088"  # 视频生成API基础URL
+VIDEO_API_BASE = "http://0.0.0.0:8088"  # 视频生成API基础URL
 VIDEO_CHECK_INTERVAL = 30  # 视频生成状态检查间隔（秒）
 # 不再需要最大检查次数，现在检查直到所有任务完成或失败
 

@@ -81,7 +81,25 @@ class WanT2V:
             device=self.device)
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.model = WanModel.from_pretrained(checkpoint_dir)
+
+        from transformers import AutoModelForCausalLM, BitsAndBytesConfig, GPTQConfig
+        
+        bnb_config = BitsAndBytesConfig(
+                #    load_in_8bit=True,  # 启用8-bit量化
+                #    llm_int8_skip_modules=["lm_head"]  # 跳过某些层（按需调整）
+                
+            
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=torch.bfloat16
+        )
+        self.model = WanModel.from_pretrained(
+                checkpoint_dir,
+                quantization_config=bnb_config,
+                trust_remote_code=True,
+                use_cache=False
+        )
         self.model.eval().requires_grad_(False)
 
         if use_usp:

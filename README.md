@@ -503,3 +503,126 @@ We would like to thank the contributors to the [SD3](https://huggingface.co/stab
 
 ## Contact Us
 If you would like to leave a message to our research or product teams, feel free to join our [Discord](https://discord.gg/AKNgpMK4Yj) or [WeChat groups](https://gw.alicdn.com/imgextra/i2/O1CN01tqjWFi1ByuyehkTSB_!!6000000000015-0-tps-611-1279.jpg)!
+
+
+
+# 图片分析与提示词生成系统
+
+这个Python系统能够自动读取指定文件夹中的图片，通过调用阿里云的AI模型API进行图片内容分析，生成描述性提示词，并使用AI对提示词进行优化，全程使用缓存机制避免重复处理相同内容。同时，系统还支持调用图生视频API，基于图片和优化后的提示词生成对应的视频。
+
+## 功能特点
+
+- 支持批量处理多种格式的图片（jpg, jpeg, png, bmp, gif）
+- 使用图片哈希值进行缓存，避免重复处理相同的图片
+- 完整的图片处理流程：图片分析 → 提示词生成 → 提示词优化 → 视频生成
+- 每个阶段的处理结果都会缓存，断点续传
+- 视频生成异步处理，自动轮询检查生成状态
+- 将处理结果整合到对应图片的子文件夹中
+- 结果以JSON格式保存，包含完整的API响应
+- 支持命令行参数自定义处理选项
+- 日志记录系统，方便追踪和调试
+
+## 安装依赖
+
+确保已安装所需的Python依赖：
+```
+pip install -r requirements.txt
+```
+
+## 使用方法
+
+### 1. 环境设置
+
+设置阿里云API密钥：
+```
+# Windows PowerShell
+$env:DASHSCOPE_API_KEY = "你的阿里云API密钥"
+
+# Windows CMD
+set DASHSCOPE_API_KEY=你的阿里云API密钥
+
+# Linux/Mac
+export DASHSCOPE_API_KEY=你的阿里云API密钥
+```
+
+### 2. 准备图片
+
+将待分析的图片放入`dataset`目录（或通过命令行参数指定其他目录）
+
+### 3. 运行系统
+
+基本用法：
+```
+python run.py
+```
+
+带参数用法：
+```
+python run.py --input 自定义输入目录 --output 自定义输出目录 --workers 4 --verbose --force
+```
+
+参数说明：
+- `--input`, `-i`: 指定输入图片目录（默认: dataset）
+- `--output`, `-o`: 指定输出结果目录（默认: output）
+- `--workers`, `-w`: 指定并行处理的线程数（默认: 1）
+- `--verbose`, `-v`: 显示详细日志
+- `--force`, `-f`: 强制重新处理所有图片（忽略缓存）
+
+### 4. 查看结果
+
+- 详细的处理日志保存在`logs`目录
+- 每张图片的分析结果保存在以图片名命名的子文件夹中（位于output目录下）
+- 每个图片子文件夹包含以下文件：
+  - `图片原文件`: 复制自dataset目录的原始图片
+  - `image_analysis.json`: 图片分析的原始API响应
+  - `prompt.json`: 初始生成的提示词
+  - `optimized_prompt.json`: 优化后的提示词
+  - `视频文件`: 基于图片和提示词生成的视频（如果成功生成）
+  - `result.json`: 包含图片路径、初始提示词、优化提示词和视频路径的汇总文件
+- 汇总结果保存在`output/summary.json`
+- 缓存信息保存在`output/cache.json`
+
+## 视频生成功能
+
+系统会自动调用图生视频API，为每张处理过的图片生成视频：
+
+1. 提交视频生成任务：系统使用图片和优化后的提示词调用API
+2. 异步处理：由于视频生成需要较长时间，系统会异步处理
+3. 自动检查：系统会每隔30秒自动检查所有待处理视频的状态
+4. 下载视频：当视频生成完成后，自动下载并保存到对应的图片文件夹中
+5. 结果更新：将视频信息更新到result.json中
+
+## 缓存系统
+
+本系统使用基于图片哈希的缓存机制，记录每张图片的处理状态和结果：
+
+- `image_recognition`: 图片内容分析结果
+- `image_prompt`: 基于图片分析生成的初始提示词
+- `optimized_prompt`: AI优化后的提示词
+- `video_task_id`: 视频生成任务ID
+- `video_path`: 视频文件存储路径
+
+如果图片已经完成了某一步骤的处理，系统会跳过该步骤，直接进入下一步骤，大大提高处理效率。
+
+## 高级用法
+
+### 自定义API调用
+
+可以在`image_analysis.py`中修改API调用参数和提示词生成指令，根据需要调整模型和参数。
+
+### 视频生成参数调整
+
+可以在代码中调整以下参数以适应不同的需求：
+- `VIDEO_CHECK_INTERVAL`: 视频状态检查间隔时间（秒）
+- `MAX_VIDEO_CHECK_ATTEMPTS`: 最大检查尝试次数
+
+### 批量处理
+
+对于大量图片的处理，建议适当增加`--workers`参数值来并行处理，但请注意API调用限制。
+
+## 故障排除
+
+- 如果遇到API错误，请检查API密钥是否正确设置
+- 如果需要重新处理所有图片，使用`--force`参数清除缓存
+- 视频生成失败或超时，可以手动运行程序，系统会自动检查未完成的视频任务
+- 详细错误信息请查看日志文件 

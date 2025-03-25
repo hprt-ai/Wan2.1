@@ -35,7 +35,7 @@ class WanI2V:
         device_id=0,
         rank=0,
         t5_fsdp=False,
-        dit_fsdp=False,
+        dit_fsdp=True,
         use_usp=False,
         t5_cpu=False,
         init_on_cpu=True,
@@ -96,7 +96,40 @@ class WanI2V:
             tokenizer_path=os.path.join(checkpoint_dir, config.clip_tokenizer))
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
+       
+
         self.model = WanModel.from_pretrained(checkpoint_dir)
+        logging.info(f"显存占用: {self.model.get_memory_footprint() / 1e9:.2f} GB")
+        
+        from transformers import AutoModelForCausalLM, BitsAndBytesConfig, GPTQConfig
+        
+        bnb_config = BitsAndBytesConfig(
+                #    load_in_8bit=True,  # 启用8-bit量化
+                #    llm_int8_skip_modules=["lm_head"]  # 跳过某些层（按需调整）
+                
+            
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=torch.bfloat16
+        )
+
+        #self.model = AutoModelForCausalLM.from_pretrained(
+        #            checkpoint_dir,
+        #            quantization_config=bnb_config,
+        #            device_map="auto"  # 自动分配模型层到设备
+        #        )
+        self.model = WanModel.from_pretrained(
+                checkpoint_dir,
+                quantization_config=bnb_config,
+                trust_remote_code=True,
+                use_cache=False
+        )
+        logging.info(f"量化后显存占用: {self.model.get_memory_footprint() / 1e9:.2f} GB")
+        logging.info(f"总显存占用: {torch.cuda.memory_allocated()/1024**3:.2f} GB")
+
+
+
         self.model.eval().requires_grad_(False)
 
         if t5_fsdp or dit_fsdp or use_usp:
@@ -123,9 +156,10 @@ class WanI2V:
         else:
             if not init_on_cpu:
                 self.model.to(self.device)
+        
 
         self.sample_neg_prompt = config.sample_neg_prompt
-
+        
     def generate(self,
                  input_prompt,
                  img,
@@ -215,9 +249,10 @@ class WanI2V:
 
         if n_prompt == "":
             n_prompt = self.sample_neg_prompt
-
+        
+        
         # preprocess
-        if not self.t5_cpu:
+        if not  self.t5_cpu:
             self.text_encoder.model.to(self.device)
             context = self.text_encoder([input_prompt], self.device)
             context_null = self.text_encoder([n_prompt], self.device)
@@ -229,6 +264,8 @@ class WanI2V:
             context = [t.to(self.device) for t in context]
             context_null = [t.to(self.device) for t in context_null]
 
+
+        img = img.to(self.device)
         self.clip.model.to(self.device)
         clip_context = self.clip.visual([img[:, None, :, :]])
         if offload_model:
