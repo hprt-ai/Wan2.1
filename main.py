@@ -283,34 +283,41 @@ def check_task_timeout(task_id: str):
         with open(task_file, 'r') as f:
             task = json.load(f)
         
-        created_at = datetime.fromisoformat(task["created_at"])
         # 只检查状态为pending、processing或initializing的任务
-        if (task["status"] in ["pending", "processing", "initializing"] and 
-            (datetime.now() - created_at).total_seconds() > TASK_TIMEOUT):
-            # 获取文件锁
-            lock_path = file_lock(task_file)
-            try:
-                # 再次读取以确保其他进程没有修改
-                with open(task_file, 'r') as f:
-                    task = json.load(f)
-                
-                # 如果任务已有结果，不要覆盖它
-                if task["result"] is not None:
-                    return False
-                
-                # 只有当任务没有结果时才更新状态为超时
-                if task["status"] in ["pending", "processing", "initializing"]:
-                    # 更新状态
-                    task["status"] = "failed"
-                    task["error"] = "Task timeout"
+        if task["status"] in ["pending", "processing", "initializing"]:
+            # 根据任务状态选择不同的时间检查逻辑
+            if task["status"] == "pending":
+                # 对于pending状态的任务，使用创建时间
+                check_time = datetime.fromisoformat(task["created_at"])
+            else:
+                # 对于processing或initializing状态的任务，使用开始时间
+                check_time = datetime.fromisoformat(task.get("start_time", task["created_at"]))
+            
+            if (datetime.now() - check_time).total_seconds() > TASK_TIMEOUT:
+                # 获取文件锁
+                lock_path = file_lock(task_file)
+                try:
+                    # 再次读取以确保其他进程没有修改
+                    with open(task_file, 'r') as f:
+                        task = json.load(f)
                     
-                    # 写回文件
-                    with open(task_file, 'w') as f:
-                        json.dump(task, f)
+                    # 如果任务已有结果，不要覆盖它
+                    if task["result"] is not None:
+                        return False
                     
-                    return True
-            finally:
-                release_file_lock(lock_path)
+                    # 只有当任务没有结果时才更新状态为超时
+                    if task["status"] in ["pending", "processing", "initializing"]:
+                        # 更新状态
+                        task["status"] = "failed"
+                        task["error"] = "Task timeout"
+                        
+                        # 写回文件
+                        with open(task_file, 'w') as f:
+                            json.dump(task, f)
+                        
+                        return True
+                finally:
+                    release_file_lock(lock_path)
     except Exception as e:
         logging.error(f"检查任务超时错误: {e}")
     
@@ -441,25 +448,28 @@ def process_generate_video_from_image(image_path, prompt, save_file, task_id):
         
         logging.info(f"开始处理视频生成任务，任务ID：{task_id}")
         
-        # 首先检查任务是否已完成或已被标记为超时
+        # 首先检查任务是否已完成
         task_file = os.path.join(TASK_DIR, f"{task_id}.json")
         if os.path.exists(task_file):
             try:
                 with open(task_file, 'r') as f:
                     task_data = json.load(f)
                     
-                if task_data["status"] in ["completed", "failed"] and task_data["result"] is not None:
-                    logging.info(f"任务已完成或失败，但有结果，跳过处理: {task_id}")
+                if task_data["status"] == "completed" and task_data["result"] is not None:
+                    logging.info(f"任务已完成，跳过处理: {task_id}")
                     return True
             except Exception as e:
                 logging.error(f"读取任务状态失败: {e}")
         
+        # 更新任务状态
+        update_task_status(task_id, {
+            "status": "processing"
+        })
+        logging.info(f"任务状态已更新为processing")
+        
         # 加载图片
         image = Image.open(image_path).convert("RGB")
         logging.info(f"加载图片完成")
-        # 更新任务状态
-        update_task_status(task_id, {"status": "processing"})
-        logging.info(f"任务状态已更新为processing")
         
         # 加载配置 - 使用I2V专用配置
         cfg = WAN_CONFIGS[I2V_TASK]
@@ -473,12 +483,13 @@ def process_generate_video_from_image(image_path, prompt, save_file, task_id):
             t5_fsdp=False,
             dit_fsdp=False,
             use_usp=False,
-            t5_cpu=True,
+            t5_cpu=False,
         )
         logging.info(f"创建WanI2V实例完成")
-        # 添加开始时间
+        
+        # 记录开始时间
         start_time = time.time()
-        logging.info(f"添加开始时间完成")
+        
         # 生成视频
         video = wan_i2v.generate(
             prompt,
@@ -509,20 +520,13 @@ def process_generate_video_from_image(image_path, prompt, save_file, task_id):
             logging.info(f"保存视频完成")
             logging.info(f"视频生成完成，耗时: {generation_time:.2f}秒")
             
-            # 更新任务状态，即使任务已超时也更新结果信息
-            # 首先检查当前任务状态
-            current_status = get_task_data(task_id)
-            update_data = {
+            # 更新任务状态
+            update_task_status(task_id, {
+                "status": "completed",
                 "result": save_file,
                 "generation_time": f"{generation_time:.2f}秒"
-            }
-            
-            # 如果任务没有被标记为失败（超时），则正常更新状态
-            if current_status and current_status.get("status") != "failed":
-                update_data["status"] = "completed"
-                
-            update_task_status(task_id, update_data)
-            logging.info(f"任务状态已更新，保留结果: {save_file}")
+            })
+            logging.info(f"任务状态已更新为completed: {save_file}")
             return True
         else:
             logging.error("视频生成失败，wan_i2v.generate返回None")
@@ -557,21 +561,23 @@ def process_generate_video_from_text(prompt, save_file, task_id):
         
         logging.info(f"开始处理文本到视频生成任务，任务ID：{task_id}")
         
-        # 首先检查任务是否已完成或已被标记为超时
+        # 首先检查任务是否已完成
         task_file = os.path.join(TASK_DIR, f"{task_id}.json")
         if os.path.exists(task_file):
             try:
                 with open(task_file, 'r') as f:
                     task_data = json.load(f)
                     
-                if task_data["status"] in ["completed", "failed"] and task_data["result"] is not None:
-                    logging.info(f"任务已完成或失败，但有结果，跳过处理: {task_id}")
+                if task_data["status"] == "completed" and task_data["result"] is not None:
+                    logging.info(f"任务已完成，跳过处理: {task_id}")
                     return True
             except Exception as e:
                 logging.error(f"读取任务状态失败: {e}")
         
         # 更新任务状态
-        update_task_status(task_id, {"status": "processing"})
+        update_task_status(task_id, {
+            "status": "processing"
+        })
         logging.info(f"任务状态已更新为processing")
         
         # 加载配置 - 使用T2V专用配置
@@ -586,12 +592,12 @@ def process_generate_video_from_text(prompt, save_file, task_id):
             t5_fsdp=False,
             dit_fsdp=False,
             use_usp=False,
-            t5_cpu=True,
+            t5_cpu=False,
         )
 
-        # 添加开始时间
+        # 记录开始时间
         start_time = time.time()
-        
+
         # 生成视频
         video = wan_t2v.generate(
             prompt,
@@ -621,20 +627,13 @@ def process_generate_video_from_text(prompt, save_file, task_id):
             
             logging.info(f"视频生成完成，耗时: {generation_time:.2f}秒")
             
-            # 更新任务状态，即使任务已超时也更新结果信息
-            # 首先检查当前任务状态
-            current_status = get_task_data(task_id)
-            update_data = {
+            # 更新任务状态
+            update_task_status(task_id, {
+                "status": "completed",
                 "result": save_file,
                 "generation_time": f"{generation_time:.2f}秒"
-            }
-            
-            # 如果任务没有被标记为失败（超时），则正常更新状态
-            if current_status and current_status.get("status") != "failed":
-                update_data["status"] = "completed"
-                
-            update_task_status(task_id, update_data)
-            logging.info(f"任务状态已更新，保留结果: {save_file}")
+            })
+            logging.info(f"任务状态已更新为completed: {save_file}")
             return True
         else:
             logging.error("视频生成失败，wan_t2v.generate返回None")
@@ -828,40 +827,6 @@ async def get_task_status(task_id: str):
             raise HTTPException(status_code=404, detail="Task not found")
         
         logging.info(f"成功获取任务状态，任务ID: {task_id}, 状态: {task['status']}")
-        
-        # 检查任务是否应该超时，但允许保留结果
-        check_task_timeout(task_id)
-        # 重新获取可能已更新的状态
-        task = get_task_data(task_id)
-        
-        # 如果任务状态为pending，更新实时队列位置
-        if task["status"] == "pending":
-            # 检查当前任务ID
-            with queue_lock:
-                if current_task and current_task.task_id == task_id:
-                    # 任务已经在处理中但状态文件还未更新
-                    position = 0
-                else:
-                    # 检查任务在队列中的位置
-                    position = 1  # 默认位置，考虑当前正在执行的任务
-                    if current_task:  # 如果有当前任务
-                        found = False
-                        # 将队列转为列表以便遍历
-                        tasks_list = list(task_queue.queue)
-                        for i, t in enumerate(tasks_list):
-                            if t.task_id == task_id:
-                                position = i + 1  # +1因为有当前任务
-                                found = True
-                                break
-                        if not found:
-                            position = None  # 任务不在队列中
-                    else:
-                        position = None
-                        
-            # 如果队列位置变化，更新状态
-            if position is not None and (task.get("queue_position") != position):
-                update_task_status(task_id, {"queue_position": position})
-                task["queue_position"] = position
         
         # 构建响应
         response = {

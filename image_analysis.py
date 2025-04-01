@@ -163,7 +163,7 @@ def optimize_prompt(image_hash: str, cache: Dict[str, Any]) -> Optional[str]:
             model="qwen-max",  # 使用文本模型
             messages=[{
                 "role": "user",
-                "content": f"根据以下图像描述，生成一个用于文生图AI的prompt，使其精确、有创意，但保持简洁（不超过80单词）。使用英文，添加适当的艺术风格、光照、构图、动作等细节:\n\n{image_description}"
+                "content": f"根据以下图像描述，生成一个用于文生视频AI的prompt，使其精确、有创意，但保持简洁（不超过80单词）。使用英文，添加适当的艺术风格、光照、构图、动作等细节:\n\n{image_description}"
             }]
         )
         

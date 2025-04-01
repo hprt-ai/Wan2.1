@@ -40,3 +40,5 @@ logs/
 output/
 *.log
 dataset/
+temp/
+*.sh

@@ -98,8 +98,8 @@ class WanI2V:
         logging.info(f"Creating WanModel from {checkpoint_dir}")
        
 
-        self.model = WanModel.from_pretrained(checkpoint_dir)
-        logging.info(f"显存占用: {self.model.get_memory_footprint() / 1e9:.2f} GB")
+        #self.model = WanModel.from_pretrained(checkpoint_dir)
+        #logging.info(f"显存占用: {self.model.get_memory_footprint() / 1e9:.2f} GB")
         
         from transformers import AutoModelForCausalLM, BitsAndBytesConfig, GPTQConfig
         
